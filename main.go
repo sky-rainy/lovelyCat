@@ -30,7 +30,7 @@ var (
 	finalFromName string // @var string 2级来源昵称
 	robotWxid     string // @var string 当前登录的账号（机器人）标识id
 	msg           string // @var string 消息内容
-	msgTpye       int    // @var int 消息类型（请务必使用新版http插件）<br><br> 1 =>文本消息 <br>3 => 图片消息 <br>34 => 语音消息 <br>42 => 名片消息 <br>43 =>视频 <br>47 => 动态表情 <br> 48 =>地理位置<br>49 => 分享链接 <br>2001 => 红包<br>2002 => 小程序<br>2003 => 群邀请 <br><br>更多请参考sdk模块常量值
+	msgType       int    // @var int 消息类型（请务必使用新版http插件）<br><br> 1 =>文本消息 <br>3 => 图片消息 <br>34 => 语音消息 <br>42 => 名片消息 <br>43 =>视频 <br>47 => 动态表情 <br> 48 =>地理位置<br>49 => 分享链接 <br>2001 => 红包<br>2002 => 小程序<br>2003 => 群邀请 <br><br>更多请参考sdk模块常量值
 	fileUrls      string // @var string 如果是文件消息（图片、语音、视频、动态表情），这里则是可直接访问的网络地址，非文件消息时为空
 	times         int    // @var int 请求时间(时间戳10位版本)
 )
@@ -102,7 +102,7 @@ func handlePostJSON(w http.ResponseWriter, r *http.Request) {
 
 	var filename = time.Now().Format("2006-01-02") + ".txt"
 	//写入日志
-	logstring := "事件类型【" + strconv.Itoa(types) + "】,消息类型【" + strconv.Itoa(msgTpye) + "】,来源【" + fromWxid + "---" + fromName + "】,来源2【" + finalFromWxid + "---" + finalFromName + "】,获取内容【" + msg + "】."
+	logstring := "事件类型【" + strconv.Itoa(types) + "】,消息类型【" + strconv.Itoa(msgType) + "】,来源【" + fromWxid + "---" + fromName + "】,来源2【" + finalFromWxid + "---" + finalFromName + "】,获取内容【" + msg + "】."
 	logInfo(filename, logstring)
 	returnMsg()
 }
@@ -182,7 +182,7 @@ func getURLPostData(d string) {
 	finalFromWxid = params["final_from_wxid"]
 	finalFromName, _ = url.QueryUnescape(params["final_from_name"])
 	robotWxid, _ = url.QueryUnescape(params["robot_wxid"])
-	msgTpye, _ = strconv.Atoi(params["msg_tpye"])
+	msgType, _ = strconv.Atoi(params["msg_type"])
 	msg, _ = url.QueryUnescape(params["msg"])
 	fileUrls = params["file_url"]
 	times, _ = strconv.Atoi(params["time"])
@@ -272,8 +272,7 @@ func returnMsg() {
 	case 100:
 		//fmt.Println("Thumb")
 	case 200:
-		log.Println("群聊---状态类型 ：", msgTpye)
-		if msgTpye == 1 {
+		if msgType == 1 {
 			sendTextMsg()
 		}
 	case 300:
