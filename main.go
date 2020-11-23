@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,11 +34,7 @@ var (
 	times         int    // @var int 请求时间(时间戳10位版本)
 )
 
-// pushData 推送的信息体
-type pushData struct {
-	Data *wxData `json:"data"`
-}
-
+// wxData 消息文本
 type wxData struct {
 	Type      int    `json:"type"`
 	RobotWxid string `json:"robot_wxid"`
@@ -48,6 +43,14 @@ type wxData struct {
 	//GroupWxid  string `json:"group_wxid"`
 	//FriendWxid string `json:"friend_wxid"`
 	//IsRefresh int `json:"is_refresh"`
+}
+
+// wxImgData 消息图片
+type wxImgData struct {
+	Type      int    `json:"type"`
+	RobotWxid string `json:"robot_wxid"`
+	Msg       string `json:"msg"`
+	Towxid    string `json:"to_wxid"`
 }
 
 func httpStart() {
@@ -96,7 +99,6 @@ func handlePostJSON(w http.ResponseWriter, r *http.Request) {
 	//获取post的数据
 	params, _ := ioutil.ReadAll(r.Body)
 	//log.Println("POST请求的type类型----> :", r.Header.Get("Content-Type"))
-
 	//赋值参数
 	getURLPostData(string(params))
 
@@ -165,13 +167,10 @@ func getURLPostData(d string) {
 		str := u[i]
 		if len(str) > 0 {
 			tem := strings.Split(str, "=")
-			log.Println("数据：", tem, "长度：", len(tem))
 			if len(tem) > 0 && len(tem) == 1 {
 				params[tem[0]] = ""
-				log.Println("数据>0 == 1：", params)
 			} else if len(tem) > 1 {
 				params[tem[0]] = tem[1]
-				log.Println("数据>1：", params)
 			}
 		}
 	}
@@ -190,35 +189,23 @@ func getURLPostData(d string) {
 
 // SimpleHTTPPost POST请求
 func SimpleHTTPPost(urlstr string, params interface{}) ([]byte, error) {
-	var (
-		err  error
-		resp *http.Response
-	)
-	httpclient := http.Client{
-		CheckRedirect: nil,
-		Jar:           nil,
-	}
+
 	jsonPost, err := json.Marshal(params)
-	fmt.Println(string(jsonPost))
+	DataURLVal := url.Values{}
+	DataURLVal.Add("data", string(jsonPost))
+	logInfo("longInfosend.txt", string(jsonPost))
 	if err != nil {
 		return []byte(""), errors.New("json encode fail")
 	}
-	requestBody := bytes.NewBuffer([]byte(jsonPost))
-	request, err := http.NewRequest("POST", urlstr, requestBody)
-	if err != nil {
-		return []byte(""), err
-	}
+	payload := strings.NewReader(DataURLVal.Encode())
+	log.Println(payload)
+	req, _ := http.NewRequest("POST", urlstr, payload)
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	//req.Header.Add("cache-control", "no-cache")
+	res, _ := http.DefaultClient.Do(req)
+	body, _ := ioutil.ReadAll(res.Body)
+	defer res.Body.Close()
 
-	resp, err = httpclient.Do(request)
-
-	if err != nil || resp == nil {
-		return []byte(""), err
-	}
-	body, err := ioutil.ReadAll(resp.Body)
-	defer resp.Body.Close()
-	if err != nil {
-		return []byte(""), err
-	}
 	return body, nil
 }
 
@@ -230,10 +217,7 @@ func getGroupList() {
 		RobotWxid: robotWxid,
 		//IsRefresh: 1,
 	}
-	data := &pushData{
-		Data: wxdata,
-	}
-	jsonBody, err := SimpleHTTPPost(ReceiveURL, data)
+	jsonBody, err := SimpleHTTPPost(ReceiveURL, wxdata)
 	if err == nil {
 		fmt.Println(string(jsonBody))
 		tname := "grouplist.txt"
@@ -242,7 +226,7 @@ func getGroupList() {
 
 }
 
-//  发送文本消息
+// sendTextMsg 发送文本消息
 func sendTextMsg() {
 
 	wxdata := &wxData{
@@ -251,11 +235,7 @@ func sendTextMsg() {
 		Msg:       url.QueryEscape(msg),
 		Towxid:    fromWxid,
 	}
-	data := &pushData{
-		Data: wxdata,
-	}
-
-	jsonBody, err := SimpleHTTPPost(ReceiveURL, data)
+	jsonBody, err := SimpleHTTPPost(ReceiveURL, wxdata)
 	if err == nil {
 		fmt.Println(string(jsonBody))
 		tname := "logsend.txt"
@@ -263,18 +243,34 @@ func sendTextMsg() {
 	} else {
 		log.Println("http发送请求：", err)
 	}
-
 }
 
-// returnMsg
+//  sendImgMsg  发送图片消息
+func sendImgMsg() {
+
+	wxdata := &wxImgData{
+		Type:      103,
+		RobotWxid: robotWxid,
+		Msg:       url.QueryEscape(msg),
+		Towxid:    fromWxid,
+	}
+	jsonBody, err := SimpleHTTPPost(ReceiveURL, wxdata)
+	if err == nil {
+		fmt.Println(string(jsonBody))
+		tname := "logsend.txt"
+		logInfo(tname, string(jsonBody))
+	} else {
+		log.Println("http发送请求：", err)
+	}
+}
+
+// returnMsg  判断  接收的 types 事件类型
 func returnMsg() {
 	switch types { //finger is declared in switch
 	case 100:
 		//fmt.Println("Thumb")
 	case 200:
-		if msgType == 1 {
-			sendTextMsg()
-		}
+		goroupReturnList()
 	case 300:
 		//fmt.Println("Middle")
 	case 400:
@@ -286,8 +282,18 @@ func returnMsg() {
 	}
 }
 
+func goroupReturnList() {
+
+	switch msgType {
+	case 1:
+		sendTextMsg()
+	case 3:
+		sendImgMsg()
+	case 47:
+		fmt.Println("消息类型47，动态图片---》", msg)
+	}
+}
+
 func main() {
-
 	httpStart()
-
 }
