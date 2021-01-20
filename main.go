@@ -1,18 +1,24 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"github.com/larspensjo/config"
+
+	"github.com/bitly/go-simplejson"
 )
 
 // GoURL 当前地址
@@ -45,12 +51,48 @@ type wxData struct {
 	//IsRefresh int `json:"is_refresh"`
 }
 
+// wxGroupData 获取群聊列表
+type wxGroupData struct {
+	Type      int    `json:"type"`
+	RobotWxid string `json:"robot_wxid"`
+	//Msg       string `json:"msg"`
+	//Towxid    string `json:"to_wxid"`
+	//GroupWxid  string `json:"group_wxid"`
+	//FriendWxid string `json:"friend_wxid"`
+	IsRefresh int `json:"is_refresh"`
+}
+
 // wxImgData 消息图片
 type wxImgData struct {
 	Type      int    `json:"type"`
 	RobotWxid string `json:"robot_wxid"`
 	Msg       string `json:"msg"`
 	Towxid    string `json:"to_wxid"`
+}
+
+// JdJSONText  京东短连接获取
+type JdJSONText struct {
+	Code int    `json:"code"`
+	Data jdData `json:"data"`
+}
+type jdData struct {
+	ShortURL  string `json:"shortURL"`
+	Message   string `json:"message"`
+	RequestID string `json:"requestId"`
+}
+
+//ServiceError 自定义错误
+type ServiceError struct {
+	Msg string
+}
+
+func (e *ServiceError) Error() string {
+	return fmt.Sprintf("%s", e.Msg)
+}
+
+//NewServiceError 自定义错误func
+func NewServiceError(msg string) error {
+	return &ServiceError{msg}
 }
 
 func httpStart() {
@@ -209,16 +251,50 @@ func SimpleHTTPPost(urlstr string, params interface{}) ([]byte, error) {
 	return body, nil
 }
 
+// PostWithFormData 获取京东短连接
+func PostWithFormData(method, urlstr string, params map[string]string) (string, error) {
+	body := new(bytes.Buffer)
+	w := multipart.NewWriter(body)
+
+	// for k, v := range *params {
+	// 	fmt.Println("循环获取：", k, v)
+	// 	w.WriteField("appkey", v)
+	// }
+	w.WriteField("appkey", params["appkey"])
+	w.WriteField("content", params["content"])
+	w.WriteField("jd_lianmeng_id", params["jd_lianmeng_id"])
+	w.WriteField("positionId", params["positionId"])
+	defer w.Close()
+	req, _ := http.NewRequest(method, urlstr, body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, _ := http.DefaultClient.Do(req)
+	data, _ := ioutil.ReadAll(resp.Body)
+	defer resp.Body.Close()
+	//fmt.Println(resp.StatusCode)
+	js, err := simplejson.NewJson([]byte(data))
+	fmt.Println(js)
+	resultinfo := js.Get("jd_union_open_promotion_byunionid_get_response").Get("result").MustString()
+	if err != nil {
+		fmt.Println(err)
+	}
+	d := &JdJSONText{}
+	er := json.Unmarshal([]byte(resultinfo), d)
+	if er != nil {
+		fmt.Println("未获取到URL", er)
+	}
+	return d.Data.ShortURL, nil
+}
+
 // getGroupList 获取当前微信群列表
 func getGroupList() {
 
-	wxdata := &wxData{
-		Type:      100,
+	wxGroupData := &wxGroupData{
+		Type:      205,
 		RobotWxid: robotWxid,
-		//IsRefresh: 1,
+		IsRefresh: 1,
 	}
-	jsonBody, err := SimpleHTTPPost(ReceiveURL, wxdata)
-	if err == nil {
+	jsonBody, err := SimpleHTTPPost(ReceiveURL, wxGroupData)
+	if err != nil {
 		fmt.Println(string(jsonBody))
 		tname := "grouplist.txt"
 		logInfo(tname, string(jsonBody))
@@ -228,21 +304,25 @@ func getGroupList() {
 
 // sendTextMsg 发送文本消息
 func sendTextMsg() {
+	tomsg := strRegexp(msg)
+	logInfo("longInfosend.txt",tomsg)
+	if tomsg != "" {
+		wxdata := &wxData{
+			Type:      100,
+			RobotWxid: robotWxid,
+			Msg:       url.QueryEscape(tomsg),
+			Towxid:    fromWxid,
+		}
+		jsonBody, err := SimpleHTTPPost(ReceiveURL, wxdata)
+		if err != nil {
+			fmt.Println(string(jsonBody))
+			tname := "logsend.txt"
+			logInfo(tname, string(jsonBody))
+		} else {
+			log.Println("http发送请求：", err)
+		}
+	}
 
-	wxdata := &wxData{
-		Type:      100,
-		RobotWxid: robotWxid,
-		Msg:       url.QueryEscape(msg),
-		Towxid:    fromWxid,
-	}
-	jsonBody, err := SimpleHTTPPost(ReceiveURL, wxdata)
-	if err == nil {
-		fmt.Println(string(jsonBody))
-		tname := "logsend.txt"
-		logInfo(tname, string(jsonBody))
-	} else {
-		log.Println("http发送请求：", err)
-	}
 }
 
 //  sendImgMsg  发送图片消息
@@ -255,7 +335,7 @@ func sendImgMsg() {
 		Towxid:    fromWxid,
 	}
 	jsonBody, err := SimpleHTTPPost(ReceiveURL, wxdata)
-	if err == nil {
+	if err != nil {
 		fmt.Println(string(jsonBody))
 		tname := "logsend.txt"
 		logInfo(tname, string(jsonBody))
@@ -270,7 +350,7 @@ func returnMsg() {
 	case 100:
 		//fmt.Println("Thumb")
 	case 200:
-		goroupReturnList()
+		gorupReturnList()
 	case 300:
 		//fmt.Println("Middle")
 	case 400:
@@ -282,7 +362,7 @@ func returnMsg() {
 	}
 }
 
-func goroupReturnList() {
+func gorupReturnList() {
 
 	switch msgType {
 	case 1:
@@ -293,6 +373,64 @@ func goroupReturnList() {
 		fmt.Println("消息类型47，动态图片---》", msg)
 	}
 }
+
+// strRegexp 正则匹配多个域名通过联盟ID转换京东短连接
+func strRegexp(str string) string {
+	furl := "https://api.zhetaoke.com:10001/api/open_jing_zhuanlian.ashx"
+	s := regexp.MustCompile(`(ht|f)tp(s?)\:\/\/(u.jd)([-.\w]*[0-9a-zA-Z])*(:(0-9)*)*(\/?)([a-zA-Z0-9\-\.\?\,\'\/\\\+&amp;%\$#_]*)?`)
+	to := s.FindAllString(str, -1)
+	if len(to) > 0 {
+		BASIC, _ := getConfig("BASIC")
+		fmt.Println(BASIC)
+		for _, jdurl := range to {
+			data := make(map[string]string)
+			data["appkey"] = BASIC["appkey"]
+			data["content"] = jdurl
+			data["jd_lianmeng_id"] = BASIC["jd_lianmeng_id"]
+			data["positionId"] = BASIC["positionId"]
+			jsonBody, err := PostWithFormData("POST", furl, data)
+			if err != nil {
+				fmt.Println(string(jsonBody))
+				tname := "jdurl.txt"
+				logInfo(tname, string(jsonBody))
+			}
+			str = strings.Replace(str, jdurl, jsonBody, -1)
+		}
+		msg = str
+		return msg
+	}
+	return msg
+}
+
+
+
+func getConfig(sec string) (map[string]string, error) {
+	targetConfig := make(map[string]string)
+	cfg, err := config.ReadDefault("Config.ini")
+	if err != nil {
+		return targetConfig, NewServiceError("unable to open config file or wrong fomart")
+	}
+	sections := cfg.Sections()
+	if len(sections) == 0 {
+		return targetConfig, NewServiceError("no " + sec + " config")
+	}
+	for _, section := range sections {
+		if section != sec {
+			continue
+		}
+		sectionData, _ := cfg.SectionOptions(section)
+		for _, key := range sectionData {
+			value, err := cfg.String(section, key)
+			if err == nil {
+				targetConfig[key] = value
+			}
+		}
+		break
+	}
+	return targetConfig, nil
+}
+
+
 
 func main() {
 	httpStart()
