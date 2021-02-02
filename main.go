@@ -55,11 +55,20 @@ type wxData struct {
 type wxGroupData struct {
 	Type      int    `json:"type"`
 	RobotWxid string `json:"robot_wxid"`
-	//Msg       string `json:"msg"`
-	//Towxid    string `json:"to_wxid"`
-	//GroupWxid  string `json:"group_wxid"`
-	//FriendWxid string `json:"friend_wxid"`
 	IsRefresh int `json:"is_refresh"`
+}
+// type jsonGroup struct {
+// 	Code  int `json:"cdoe"`
+// 	Data[] *groupData `json:"data"`
+// }
+type jsonGroup struct {
+	Code  int `json:"cdoe"`
+	Data  interface{} `json:"data"`
+}
+type groupData struct {
+	Wxid string   `json:"wxid"`
+	Nickname string  `json:"nickname"`
+	RobotWxid  string `json:"robot_wxid"`
 }
 
 // wxImgData 消息图片
@@ -148,6 +157,9 @@ func handlePostJSON(w http.ResponseWriter, r *http.Request) {
 	//写入日志
 	logstring := "事件类型【" + strconv.Itoa(types) + "】,消息类型【" + strconv.Itoa(msgType) + "】,来源【" + fromWxid + "---" + fromName + "】,来源2【" + finalFromWxid + "---" + finalFromName + "】,获取内容【" + msg + "】."
 	logInfo(filename, logstring)
+	//获取群组
+	getGroupList()
+	//获取消息类型状态
 	returnMsg()
 }
 
@@ -286,7 +298,24 @@ func PostWithFormData(method, urlstr string, params map[string]string) (string, 
 }
 
 // getGroupList 获取当前微信群列表
-func getGroupList() {
+func getGroupList(){
+	wxGroupData := &wxGroupData{
+		Type:      205,
+		RobotWxid: robotWxid,
+		IsRefresh: 1,
+	}
+	jsonBody, err := SimpleHTTPPost(ReceiveURL, wxGroupData)
+	if err != nil {
+		tname := "grouplist.txt"
+		logInfo(tname, string(jsonBody))
+	}
+	strs := string(jsonBody)
+	d,_ := url.QueryUnescape(strs)
+	tname := "grouplist.txt"
+	logInfo(tname,d)
+}
+// 监听指定群消息 发送指定群消息
+func getGroupListSend() {
 
 	wxGroupData := &wxGroupData{
 		Type:      205,
@@ -299,13 +328,64 @@ func getGroupList() {
 		tname := "grouplist.txt"
 		logInfo(tname, string(jsonBody))
 	}
+	qujson,_ := url.QueryUnescape(string(jsonBody))
+	tomsg := strRegexp(msg)
+	logInfo("longInfosend.txt",tomsg)
+	st1 := strings.Replace(qujson, "\"[","[", -1)
+	st2 := strings.Replace(st1, "]\"","]", -1)
+	json, err := simplejson.NewJson([]byte(st2))
+	if err != nil {
+		fmt.Println(err)
+	}
+    isgroup := false
+	fromGroup, _ := getConfig("fromGroup")
+	fgroup := strings.Split(fromGroup["groupid"], ",")
+	for _,f := range fgroup{
+		if f == fromWxid {
+		   isgroup = true
+		   fmt.Println("来源群消息：",fromWxid,isgroup)
+		}
+	}
+	if isgroup && tomsg != "" {
+		s,_ :=  json.Get("data").Array()
+		fmt.Println("获取到的群列表：",s)
+		toGroup, _ := getConfig("toGroup")
+		tgroup :=  strings.Split(toGroup["groupid"], ",")
+		for i := range s {
+			info := json.Get("data").GetIndex(i)
+			for _,v :=  range tgroup{
+				if info.Get("wxid").MustString() == v {
+					fmt.Println("发送群消息：",v)
+					groupSendTextMsg(tomsg,v)
+				}
+			}
+		}
+	}
 
 }
 
 // sendTextMsg 发送文本消息
 func sendTextMsg() {
-	tomsg := strRegexp(msg)
-	logInfo("longInfosend.txt",tomsg)
+
+		wxdata := &wxData{
+			Type:      100,
+			RobotWxid: robotWxid,
+			Msg:       url.QueryEscape(msg),
+			Towxid:    fromWxid,
+		}
+		jsonBody, err := SimpleHTTPPost(ReceiveURL, wxdata)
+		if err != nil {
+			fmt.Println(string(jsonBody))
+			tname := "logsend.txt"
+			logInfo(tname, string(jsonBody))
+		} else {
+			log.Println("http发送请求：", err)
+		}
+
+}
+
+func  groupSendTextMsg(tomsg string ,fromWxid string){
+
 	if tomsg != "" {
 		wxdata := &wxData{
 			Type:      100,
@@ -322,6 +402,7 @@ func sendTextMsg() {
 			log.Println("http发送请求：", err)
 		}
 	}
+
 
 }
 
@@ -348,9 +429,13 @@ func sendImgMsg() {
 func returnMsg() {
 	switch types { //finger is declared in switch
 	case 100:
+		//私聊
 		//fmt.Println("Thumb")
 	case 200:
-		gorupReturnList()
+		if msgType == 1 {
+			//群消息
+			getGroupListSend()
+		}
 	case 300:
 		//fmt.Println("Middle")
 	case 400:
@@ -396,10 +481,12 @@ func strRegexp(str string) string {
 			}
 			str = strings.Replace(str, jdurl, jsonBody, -1)
 		}
+		tname := "jdurl.txt"
+		logInfo(tname, "请求京东URL："+string(str))
 		msg = str
 		return msg
 	}
-	return msg
+	return ""
 }
 
 
@@ -429,7 +516,6 @@ func getConfig(sec string) (map[string]string, error) {
 	}
 	return targetConfig, nil
 }
-
 
 
 func main() {
