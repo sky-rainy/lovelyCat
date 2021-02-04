@@ -6,6 +6,10 @@
 appkey = ecaf7941150242ec8cb292c5065d7db7
 jd_lianmeng_id = 联盟ID
 positionId = 推广位ID
+[fromGroup]
+groupid = 
+[toGroup]
+groupid = 
 ```
 ---
 ### build
