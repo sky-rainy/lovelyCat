@@ -514,7 +514,7 @@ func strRegexp(str string) string {
 		fmt.Println("匹配获取京东短链接:", to)
 		for _, jdurl := range to {
 			data := make(map[string]string)
-			data["appkey"] = BASIC["appkey"]
+			data["appkey"] = "ecaf7941150242ec8cb292c5065d7db7"
 			data["content"] = jdurl
 			data["jd_lianmeng_id"] = BASIC["jd_lianmeng_id"]
 			data["positionId"] = BASIC["positionId"]
