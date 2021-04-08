@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
 	"github.com/larspensjo/config"
 
 	"github.com/bitly/go-simplejson"
@@ -55,20 +56,21 @@ type wxData struct {
 type wxGroupData struct {
 	Type      int    `json:"type"`
 	RobotWxid string `json:"robot_wxid"`
-	IsRefresh int `json:"is_refresh"`
+	IsRefresh int    `json:"is_refresh"`
 }
+
 // type jsonGroup struct {
 // 	Code  int `json:"cdoe"`
 // 	Data[] *groupData `json:"data"`
 // }
 type jsonGroup struct {
-	Code  int `json:"cdoe"`
-	Data  interface{} `json:"data"`
+	Code int         `json:"cdoe"`
+	Data interface{} `json:"data"`
 }
 type groupData struct {
-	Wxid string   `json:"wxid"`
-	Nickname string  `json:"nickname"`
-	RobotWxid  string `json:"robot_wxid"`
+	Wxid      string `json:"wxid"`
+	Nickname  string `json:"nickname"`
+	RobotWxid string `json:"robot_wxid"`
 }
 
 // wxImgData 消息图片
@@ -107,7 +109,7 @@ func NewServiceError(msg string) error {
 func httpStart() {
 
 	http.HandleFunc("/api", handlePostJSON)
-	//http.HandleFunc("/group", getGroupList)
+	http.HandleFunc("/glist", getGroupList)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "%s", "aaaa")
 	})
@@ -152,13 +154,12 @@ func handlePostJSON(w http.ResponseWriter, r *http.Request) {
 	//log.Println("POST请求的type类型----> :", r.Header.Get("Content-Type"))
 	//赋值参数
 	getURLPostData(string(params))
-
 	var filename = time.Now().Format("2006-01-02") + ".txt"
 	//写入日志
 	logstring := "事件类型【" + strconv.Itoa(types) + "】,消息类型【" + strconv.Itoa(msgType) + "】,来源【" + fromWxid + "---" + fromName + "】,来源2【" + finalFromWxid + "---" + finalFromName + "】,获取内容【" + msg + "】."
 	logInfo(filename, logstring)
 	//获取群组
-	getGroupList()
+	//getGroupList()
 	//获取消息类型状态
 	returnMsg()
 }
@@ -252,7 +253,7 @@ func SimpleHTTPPost(urlstr string, params interface{}) ([]byte, error) {
 		return []byte(""), errors.New("json encode fail")
 	}
 	payload := strings.NewReader(DataURLVal.Encode())
-	log.Println(payload)
+	//log.Println(payload)
 	req, _ := http.NewRequest("POST", urlstr, payload)
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	//req.Header.Add("cache-control", "no-cache")
@@ -280,25 +281,27 @@ func PostWithFormData(method, urlstr string, params map[string]string) (string, 
 	req, _ := http.NewRequest(method, urlstr, body)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	resp, _ := http.DefaultClient.Do(req)
-	data, _ := ioutil.ReadAll(resp.Body)
+	data, err1 := ioutil.ReadAll(resp.Body)
+	if err1 != nil {
+		fmt.Println("请求转换JD短连接异常:", err1)
+	}
 	defer resp.Body.Close()
 	//fmt.Println(resp.StatusCode)
 	js, err := simplejson.NewJson([]byte(data))
-	fmt.Println(js)
 	resultinfo := js.Get("jd_union_open_promotion_byunionid_get_response").Get("result").MustString()
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("获取转换后短连接异常:", err)
 	}
 	d := &JdJSONText{}
 	er := json.Unmarshal([]byte(resultinfo), d)
 	if er != nil {
 		fmt.Println("未获取到URL", er)
 	}
-	return d.Data.ShortURL, nil
+	return d.Data.ShortURL, err1
 }
 
 // getGroupList 获取当前微信群列表
-func getGroupList(){
+func getGroupList(w http.ResponseWriter, r *http.Request) {
 	wxGroupData := &wxGroupData{
 		Type:      205,
 		RobotWxid: robotWxid,
@@ -310,81 +313,123 @@ func getGroupList(){
 		logInfo(tname, string(jsonBody))
 	}
 	strs := string(jsonBody)
-	d,_ := url.QueryUnescape(strs)
+	d, _ := url.QueryUnescape(strs)
 	tname := "grouplist.txt"
-	logInfo(tname,d)
-}
-// 监听指定群消息 发送指定群消息
-func getGroupListSend() {
-
-	wxGroupData := &wxGroupData{
-		Type:      205,
-		RobotWxid: robotWxid,
-		IsRefresh: 1,
-	}
-	jsonBody, err := SimpleHTTPPost(ReceiveURL, wxGroupData)
-	if err != nil {
-		fmt.Println(string(jsonBody))
-		tname := "grouplist.txt"
-		logInfo(tname, string(jsonBody))
-	}
-	qujson,_ := url.QueryUnescape(string(jsonBody))
-	tomsg := strRegexp(msg)
-	logInfo("longInfosend.txt",tomsg)
-	st1 := strings.Replace(qujson, "\"[","[", -1)
-	st2 := strings.Replace(st1, "]\"","]", -1)
+	st1 := strings.Replace(d, "\"[", "[", -1)
+	st2 := strings.Replace(st1, "]\"", "]", -1)
 	json, err := simplejson.NewJson([]byte(st2))
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("解析群列表失败", err)
 	}
-    isgroup := false
+	s, _ := json.Get("data").Array()
+	hm := ""
+	fmt.Fprintf(w, "%s\n\n", "当前所有的群")
+	for i := range s {
+		info := json.Get("data").GetIndex(i)
+		hm = "微信群的ID：【" + info.Get("wxid").MustString() + "】--->微信群名称：【" + info.Get("nickname").MustString() + "】"
+		fmt.Fprintf(w, "%s\n\n", hm)
+	}
+
+	logInfo(tname, d)
+}
+
+// 监听指定群消息 发送指定群消息
+// func getGroupListSend() {
+
+// 	wxGroupData := &wxGroupData{
+// 		Type:      205,
+// 		RobotWxid: robotWxid,
+// 		IsRefresh: 1,
+// 	}
+// 	jsonBody, err := SimpleHTTPPost(ReceiveURL, wxGroupData)
+// 	if err != nil {
+// 		fmt.Println(string(jsonBody))
+// 		tname := "grouplist.txt"
+// 		logInfo(tname, string(jsonBody))
+// 	}
+// 	qujson, _ := url.QueryUnescape(string(jsonBody))
+// 	tomsg := strRegexp(msg)
+// 	logInfo("longInfosend.txt", tomsg)
+// 	st1 := strings.Replace(qujson, "\"[", "[", -1)
+// 	st2 := strings.Replace(st1, "]\"", "]", -1)
+// 	json, err := simplejson.NewJson([]byte(st2))
+// 	if err != nil {
+// 		fmt.Println(err)
+// 	}
+// 	isgroup := false
+// 	fromGroup, _ := getConfig("fromGroup")
+// 	fgroup := strings.Split(fromGroup["groupid"], ",")
+// 	for _, f := range fgroup {
+// 		if f == fromWxid {
+// 			isgroup = true
+// 			fmt.Println("来源群消息：", fromWxid, isgroup)
+// 		}
+// 	}
+// 	if isgroup && tomsg != "" {
+// 		s, _ := json.Get("data").Array()
+// 		fmt.Println("获取到的群列表：", s)
+// 		toGroup, _ := getConfig("toGroup")
+// 		tgroup := strings.Split(toGroup["groupid"], ",")
+// 		for i := range s {
+// 			info := json.Get("data").GetIndex(i)
+// 			for _, v := range tgroup {
+// 				if info.Get("wxid").MustString() == v {
+// 					fmt.Println("发送群消息：", v)
+// 					groupSendTextMsg(tomsg, v)
+// 				}
+// 			}
+// 		}
+// 	}
+
+// }
+
+// getGroupListSend 监听指定群消息 发送指定群消息
+func getGroupListSend() {
+	log.Println("------开始处群消息理------")
+	tomsg := strRegexp(msg)
+	logInfo("gainJDUrl.txt", tomsg)
+	isgroup := false
 	fromGroup, _ := getConfig("fromGroup")
 	fgroup := strings.Split(fromGroup["groupid"], ",")
-	for _,f := range fgroup{
+	for _, f := range fgroup {
 		if f == fromWxid {
-		   isgroup = true
-		   fmt.Println("来源群消息：",fromWxid,isgroup)
+			isgroup = true
+			fmt.Printf("查询消息来源指定群ID:%v,%v\n", fromWxid, isgroup)
 		}
 	}
 	if isgroup && tomsg != "" {
-		s,_ :=  json.Get("data").Array()
-		fmt.Println("获取到的群列表：",s)
 		toGroup, _ := getConfig("toGroup")
-		tgroup :=  strings.Split(toGroup["groupid"], ",")
-		for i := range s {
-			info := json.Get("data").GetIndex(i)
-			for _,v :=  range tgroup{
-				if info.Get("wxid").MustString() == v {
-					fmt.Println("发送群消息：",v)
-					groupSendTextMsg(tomsg,v)
-				}
-			}
+		tgroup := strings.Split(toGroup["groupid"], ",")
+		for _, v := range tgroup {
+			fmt.Printf("发送消息给指定群ID：%v\n", v)
+			groupSendTextMsg(tomsg, v)
 		}
 	}
-
+	log.Println("----------结束----------")
+	fmt.Printf("\n\n")
 }
 
 // sendTextMsg 发送文本消息
 func sendTextMsg() {
 
-		wxdata := &wxData{
-			Type:      100,
-			RobotWxid: robotWxid,
-			Msg:       url.QueryEscape(msg),
-			Towxid:    fromWxid,
-		}
-		jsonBody, err := SimpleHTTPPost(ReceiveURL, wxdata)
-		if err != nil {
-			fmt.Println(string(jsonBody))
-			tname := "logsend.txt"
-			logInfo(tname, string(jsonBody))
-		} else {
-			log.Println("http发送请求：", err)
-		}
+	wxdata := &wxData{
+		Type:      100,
+		RobotWxid: robotWxid,
+		Msg:       url.QueryEscape(msg),
+		Towxid:    fromWxid,
+	}
+	jsonBody, err := SimpleHTTPPost(ReceiveURL, wxdata)
+	if err != nil {
+		fmt.Println(string(jsonBody))
+		tname := "logsend.txt"
+		logInfo(tname, string(jsonBody))
+	} else {
+		log.Println("http发送请求：", err)
+	}
 
 }
 
-func  groupSendTextMsg(tomsg string ,fromWxid string){
+func groupSendTextMsg(tomsg string, fromWxid string) {
 
 	if tomsg != "" {
 		wxdata := &wxData{
@@ -397,12 +442,12 @@ func  groupSendTextMsg(tomsg string ,fromWxid string){
 		if err != nil {
 			fmt.Println(string(jsonBody))
 			tname := "logsend.txt"
+			log.Println("发送msg请求失败：", err)
 			logInfo(tname, string(jsonBody))
 		} else {
-			log.Println("http发送请求：", err)
+			log.Println("发送msg请求成功")
 		}
 	}
-
 
 }
 
@@ -466,7 +511,7 @@ func strRegexp(str string) string {
 	to := s.FindAllString(str, -1)
 	if len(to) > 0 {
 		BASIC, _ := getConfig("BASIC")
-		fmt.Println(BASIC)
+		fmt.Println("匹配获取京东短链接:", to)
 		for _, jdurl := range to {
 			data := make(map[string]string)
 			data["appkey"] = BASIC["appkey"]
@@ -475,21 +520,18 @@ func strRegexp(str string) string {
 			data["positionId"] = BASIC["positionId"]
 			jsonBody, err := PostWithFormData("POST", furl, data)
 			if err != nil {
-				fmt.Println(string(jsonBody))
-				tname := "jdurl.txt"
-				logInfo(tname, string(jsonBody))
+				fmt.Printf("转换京东短链接异常:%v\n", jsonBody)
 			}
 			str = strings.Replace(str, jdurl, jsonBody, -1)
 		}
-		tname := "jdurl.txt"
-		logInfo(tname, "请求京东URL："+string(str))
 		msg = str
 		return msg
 	}
+	fmt.Println("未批匹配获取京东短链接:", to)
+	tname := "jdurl.txt"
+	logInfo(tname, "未匹配到JD短连接："+str)
 	return ""
 }
-
-
 
 func getConfig(sec string) (map[string]string, error) {
 	targetConfig := make(map[string]string)
@@ -516,7 +558,6 @@ func getConfig(sec string) (map[string]string, error) {
 	}
 	return targetConfig, nil
 }
-
 
 func main() {
 	httpStart()
