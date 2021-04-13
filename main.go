@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/larspensjo/config"
@@ -248,7 +249,7 @@ func SimpleHTTPPost(urlstr string, params interface{}) ([]byte, error) {
 	jsonPost, err := json.Marshal(params)
 	DataURLVal := url.Values{}
 	DataURLVal.Add("data", string(jsonPost))
-	logInfo("longInfosend.txt", string(jsonPost))
+	logInfo("sendLogInfo.txt", string(jsonPost))
 	if err != nil {
 		return []byte(""), errors.New("json encode fail")
 	}
@@ -385,27 +386,29 @@ func getGroupList(w http.ResponseWriter, r *http.Request) {
 
 // getGroupListSend 监听指定群消息 发送指定群消息
 func getGroupListSend() {
-	log.Println("------开始处群消息理------")
-	tomsg := strRegexp(msg)
-	logInfo("gainJDUrl.txt", tomsg)
-	isgroup := false
-	fromGroup, _ := getConfig("fromGroup")
-	fgroup := strings.Split(fromGroup["groupid"], ",")
-	for _, f := range fgroup {
-		if f == fromWxid {
-			isgroup = true
-			fmt.Printf("查询消息来源指定群ID:%v,%v\n", fromWxid, isgroup)
-		}
-	}
-	if isgroup && tomsg != "" {
+	log.Println("------开始处理群消息------")
+	var wg sync.WaitGroup // 定义
+	//创建通道
+	tomsg := make(chan string)
+	go func() {
+		//转换JD短链接
+		strRegexp(msg, tomsg)
+	}()
+	rMsg := <-tomsg
+	if rMsg != "" {
 		toGroup, _ := getConfig("toGroup")
 		tgroup := strings.Split(toGroup["groupid"], ",")
-		for _, v := range tgroup {
-			fmt.Printf("发送消息给指定群ID：%v\n", v)
-			groupSendTextMsg(tomsg, v)
+		for _, value := range tgroup {
+			fmt.Printf("发送消息给指定群ID：%v\n", value)
+			v := value
+			wg.Add(1)
+			go func() {
+				groupSendTextMsg(&wg, rMsg, v)
+			}()
 		}
 	}
-	log.Println("----------结束----------")
+	wg.Wait()
+	log.Println("-----------结束-----------")
 	fmt.Printf("\n\n")
 }
 
@@ -429,7 +432,7 @@ func sendTextMsg() {
 
 }
 
-func groupSendTextMsg(tomsg string, fromWxid string) {
+func groupSendTextMsg(wg *sync.WaitGroup, tomsg string, fromWxid string) {
 
 	if tomsg != "" {
 		wxdata := &wxData{
@@ -442,13 +445,45 @@ func groupSendTextMsg(tomsg string, fromWxid string) {
 		if err != nil {
 			fmt.Println(string(jsonBody))
 			tname := "logsend.txt"
-			log.Println("发送msg请求失败：", err)
+			log.Println("发送给ID【"+fromWxid+"】的msg请求失败：", err)
 			logInfo(tname, string(jsonBody))
 		} else {
-			log.Println("发送msg请求成功")
+			log.Println("发送给ID【" + fromWxid + "】的msg请求成功")
 		}
+		defer wg.Done()
 	}
 
+}
+
+// groupSendImg 发送指定群图片
+func groupSendImg() {
+	log.Println("------开始处理群消息------")
+	wxdata := &wxImgData{
+		Type:      103,
+		RobotWxid: robotWxid,
+		Msg:       url.QueryEscape(msg),
+		Towxid:    "",
+	}
+	toGroup, _ := getConfig("turnImg")
+	if len(toGroup["groupid"]) > 0 {
+		tgroup := strings.Split(toGroup["groupid"], ",")
+		for _, value := range tgroup {
+			wxdata.Towxid = value
+			jsonBody, err := SimpleHTTPPost(ReceiveURL, wxdata)
+			if err != nil {
+				fmt.Println(string(jsonBody))
+				tname := "logsend.txt"
+				log.Println("发送给ID【"+value+"】的Img请求失败：", err)
+				logInfo(tname, string(jsonBody))
+			} else {
+				log.Println("发送给ID【" + value + "】的Img请求成功")
+			}
+		}
+	} else {
+		fmt.Println("未配置发送图片的群")
+	}
+	log.Println("-----------结束-----------")
+	fmt.Printf("\n\n")
 }
 
 //  sendImgMsg  发送图片消息
@@ -477,9 +512,36 @@ func returnMsg() {
 		//私聊
 		//fmt.Println("Thumb")
 	case 200:
-		if msgType == 1 {
-			//群消息
-			getGroupListSend()
+		switch msgType {
+		case 1:
+			fromGroup, _ := getConfig("fromGroup")
+			fgroup := strings.Split(fromGroup["groupid"], ",")
+			for _, f := range fgroup {
+				if f == fromWxid {
+					log.Printf("匹配到消息来源指定群ID:%v\n", fromWxid)
+					//群消息
+					go func() {
+						getGroupListSend()
+					}()
+				}
+			}
+		case 3:
+			isImg, _ := getConfig("turnImg")
+			s, _ := strconv.Atoi(isImg["turn"])
+			if s == 1 {
+				fromGroup, _ := getConfig("fromGroup")
+				fgroup := strings.Split(fromGroup["groupid"], ",")
+				for _, f := range fgroup {
+					if f == fromWxid {
+						log.Printf("匹配到图片来源指定群ID:%v\n", fromWxid)
+						//群消息
+						go func() {
+							groupSendImg()
+						}()
+					}
+				}
+
+			}
 		}
 	case 300:
 		//fmt.Println("Middle")
@@ -505,7 +567,7 @@ func gorupReturnList() {
 }
 
 // strRegexp 正则匹配多个域名通过联盟ID转换京东短连接
-func strRegexp(str string) string {
+func strRegexp(str string, tomsg chan string) {
 	furl := "https://api.zhetaoke.com:10001/api/open_jing_zhuanlian.ashx"
 	s := regexp.MustCompile(`(ht|f)tp(s?)\:\/\/(u.jd)([-.\w]*[0-9a-zA-Z])*(:(0-9)*)*(\/?)([a-zA-Z0-9\-\.\?\,\'\/\\\+&amp;%\$#_]*)?`)
 	to := s.FindAllString(str, -1)
@@ -524,13 +586,13 @@ func strRegexp(str string) string {
 			}
 			str = strings.Replace(str, jdurl, jsonBody, -1)
 		}
-		msg = str
-		return msg
+		tomsg <- str
+	} else {
+		fmt.Println("未批匹配获取京东短链接:", to)
+		tname := "jdurl.txt"
+		logInfo(tname, "未匹配到JD短连接："+str)
+		tomsg <- ""
 	}
-	fmt.Println("未批匹配获取京东短链接:", to)
-	tname := "jdurl.txt"
-	logInfo(tname, "未匹配到JD短连接："+str)
-	return ""
 }
 
 func getConfig(sec string) (map[string]string, error) {

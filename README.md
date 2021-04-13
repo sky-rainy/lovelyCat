@@ -9,6 +9,9 @@ positionId = 推广位ID
 groupid = id,id,id
 [toGroup]
 groupid = id,id,id
+[turnImg]
+groupid = id,di
+turn = 1   `0关闭1开启`
 ```
 ---
 ### build
